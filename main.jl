@@ -7,7 +7,17 @@ using Distributed
 using SparseArrays
 
 
-# note that the graphene indices swap roles on the second layer (should only need to worry about this in geometry construction)
+# note that the graphene indices swap roles on the second layer (should only need to worry about this in geometry construction [just amounts to a technical detail])
+
+"""
+Note that there are two indexing types:
+    - Matrix indices: integers, used directly to get elements of matrices
+    - Site indices: abstract structs, meant to serve as intermediates for matrix indices (~~"virtual indices"~~)
+Matrix indices only have within moire cell info, unlike site indices which have all the info.
+This is not a problem as the code is streamlined this way by letting the site indices do all the work
+in the backround at the start to create the necessary coupling dictionaries, and then the matrix indices
+do the rest of the work (much faster and less garbage collection, with the cost of more memory allocation).
+"""
 
 # ===============================================================================
 # Geometry
@@ -31,6 +41,8 @@ struct TBGGeometry
     b2_up::SVector{3, Float64} 
     L1::SVector{3, Float64}
     L2::SVector{3, Float64}
+    k1::SVector{3, Float64}
+    k2::SVector{3, Float64}
 end
 
 
@@ -56,10 +68,7 @@ struct TBGConstants
     l_c::Float64
     r_thresh::Float64 
     n_thresh::Int                 
-    thresh_connections::Dict{SiteIdx, Vector{SiteIdx}}    # remove this (or keep it b/c its more general than matrix indices) 
-    # would also need to specify N1, N2 in order to get the set below (should be fine)
-    # add a set of pairs of matrix idxs that are connected by threshold 
-    # add a dictionary mapping pairs in the set above to their difference vector (r(a)-r(b)) for constructing hamiltonian
+    thresh_connections::Dict{SiteIdx, Vector{SiteIdx}}    # only includes spin up (need to account for this later)
 end
 
 
@@ -121,19 +130,27 @@ function TBGGeometry(m::Int, n::Int)::TBGGeometry
     mn = SVector{2}(m, n)
     graphene_cells = get_graphene_cells(mn)
     θ = get_twist_angle(mn)
+
     a1_down = SVector{3}((d*sqrt(3)) * [1, 0, 0])
     a1_up = SVector{3}(rot_matrix_xy(-θ) * a1_down)
     a2_down = SVector{3}((d*sqrt(3)) * [1/2, sqrt(3)/2, 0])
     a2_up = SVector{3}(rot_matrix_xy(-θ) * a2_down)
+
     b1_down = SVector{3}(d * [sqrt(3)/2, 1/2, 0])
     b1_up = SVector{3}(rot_matrix_xy(-θ) * b1_down)
     b2_down = SVector{3}(d * [sqrt(3)/2, -1/2, 0])
     b2_up = SVector{3}(rot_matrix_xy(-θ) * b2_down)
+
     L1 = SVector{3}(n * a1_down + m * a2_down)
     L2 = SVector{3}(-m * a1_down + (n + m) * a2_down)
 
+    # reciprocal lattice vectors
+    A = 2 * pi / (L1[1] * L2[2] - L1[2] * L2[1])
+    k1 = SVector{3}(A * [L2[2], -L2[1], 0])
+    k2 = SVector{3}(A * [-L1[2], L1[1], 0])
+
     return TBGGeometry(d, h, mn, graphene_cells, θ, a1_down,a1_up, a2_down, a2_up, b1_down, b1_up, b2_down, 
-                        b2_up, L1, L2)            
+                        b2_up, L1, L2, k1, k2)            
 end
 
 
@@ -244,7 +261,7 @@ function TBGConstants(geom::TBGGeometry)::TBGConstants
     q_pi = 3.15
     r_c = 5.0
     l_c = 0.265
-    r_thresh = 15.0                                  # need to think carefully about this value
+    r_thresh = 8.0                                # need to think carefully about this value
     n_thresh = get_n_thresh(r_thresh, geom)       # number of moire cells within proximity (in L1/L2 directions, for a total of 4n^2 + 4n + 1)
     thresh_connections = get_thresh_connections(r_thresh, n_thresh, geom)
 
@@ -257,6 +274,107 @@ end
 # Physics
 # ===============================================================================
 
+"""Get the coulomb interaction strength (accounts for possibility of same site interaction for opposite spins)"""
+function get_V(si_μ::SiteIdx, si_v::SiteIdx)::Float64
+    dr = norm(si_μ.pos - si_v.pos)
+    return 1.438 / (0.116 + dr)     # in units of eV (took this form from arXiv:2511.04899v1)
+end
+
+
+"""Overarching container for all the important constants of the program"""
+struct TBGSimulation 
+    geometry::TBGGeometry
+    constants::TBGConstants
+    coupled_midxs::Dict{Int, Vector{Int}}         # midxs <=> matrix indices
+    coupled_midxs_tunneling::Dict{SVector{2, Int}, Vector{Tuple{SVector{3, Float64}, Float64}}}
+end
+
+
+"""Dense 0-based index of a graphene cell within the moire cell (layer-dependent)"""
+@inline function graphene_integer(g::SVector{2,Int}, layer::Int, mn::SVector{2,Int})::Int
+    m, n = mn
+    N = m^2 + m * n + n^2
+    return layer == 1 ? mod(m * g[1] - n * g[2], N) : mod(n * g[1] - m * g[2], N)
+end
+
+
+"""Convert site index to matrix index"""
+function si_to_mi(si::SiteIdx, geom::TBGGeometry)::Tuple{Int, SVector{3, Float64}}
+    m, n = geom.mn
+    N = m^2 + m * n + n^2
+
+    g = graphene_integer(si.graphene, si.layer, geom.mn)
+    sub = si.sublattice - 1
+    layer = si.layer - 1
+    spin = Int((1 - si.spin) / 2)             # spin +1 -> 0, -1 -> 1
+
+    mi = 1 + g + N * (sub + 2 * layer + 4 * spin)        # g + N_g*s + N_g*N_s*l + N_g*N_s*N_l*σ
+    R_moire = si.moire[1] * geom.L1 + si.moire[2] * geom.L2
+    return mi, R_moire
+end
+
+
+"""function to construct coupled_midxs and coupled_midxs_tunneling dictionaries"""
+function get_coupling_dicts(geom::TBGGeometry, consts::TBGConstants)::Tuple{Dict{Int, Vector{Int}}, Dict{SVector{2, Int}, Vector{Tuple{SVector{3, Float64}, Float64}}}}
+    coupled_midxs = Dict{Int, Vector{Int}}()
+    coupled_midxs_tunneling = Dict{SVector{2, Int}, Vector{Tuple{SVector{3, Float64}, Float64}}}()
+    
+    for (si_μ_0, connected_si_v) in consts.thresh_connections   # loop through key, value pairs
+        # thresh_connections only has spin up sites, need to also do spin down
+        for spin_μ in (1, -1)    # making sure to get both spin up and down
+            si_μ = SiteIdx(si_μ_0.moire, si_μ_0.graphene, si_μ_0.sublattice, si_μ_0.layer, spin_μ, geom)
+            mi_μ, _ = si_to_mi(si_μ, geom)
+            unique_connected_mi_v = Set{Int}()    # need this for coupled_midxs
+
+            for si_v_0 in connected_si_v
+                for spin_v in (1, -1)      # making sure to get both spin up and down
+                    si_v = SiteIdx(si_v_0.moire, si_v_0.graphene, si_v_0.sublattice, si_v_0.layer, spin_v, geom)
+                    mi_v, η = si_to_mi(si_v, geom)
+                    
+                    push!(unique_connected_mi_v, mi_v)       # pushing to a set ensures that duplicates don't get added
+                    V_μvη = get_V(si_μ, si_v)
+
+                    mi_μv = SVector{2}(mi_μ, mi_v)
+
+                    # adding onto coupled_midxs_tunneling
+                    if haskey(coupled_midxs_tunneling, mi_μv)    # (μ, v) already in the dict
+                        
+                        push!(coupled_midxs_tunneling[mi_μv], (η, V_μvη))
+                    else     # (μ, v) not yet in the dict
+                        
+                        coupled_midxs_tunneling[mi_μv] = [(η, V_μvη)]
+                    end
+                end
+            end
+            
+            coupled_midxs[mi_μ] = collect(unique_connected_mi_v)
+        end
+    end
+
+    return (coupled_midxs, coupled_midxs_tunneling)
+end
+
+
+"""constructor for the TBGSimulation object"""
+function TBGSimulation(geom::TBGGeometry, consts::TBGConstants)
+    coupled_midxs, coupled_midxs_tunneling = get_coupling_dicts(geom, consts)
+    return TBGSimulation(geom, consts, coupled_midxs, coupled_midxs_tunneling)
+end
+
+
+# function to construct T(k) matrix (or all at once)
+function construct_T_k()  # gotta leave it for tomorrow unfortunately :'(
+
+
+# function to construct H(k)[{P(k):k}] (or all at once)
+
+
+# functions relating to SCF HF
+
+
+# plotting the resulting band structure
+
+
 
 
 # ===============================================================================
@@ -268,41 +386,15 @@ benchmarking tools and reminders:
 - use @benchmark and display(_) to get the statistics of a function
 - use @btime to get time and memory statistics (it prints automatically)
 - use @time for time of a single run
+- use @elapsed for only time 
 """
 
 
-"""Plot the moire superlattice unit cell"""
-function plot_cells(m::Int, n::Int)::Nothing
+function plot_thresh_sites(m::Int, n::Int)::Nothing
     tbg_geom = TBGGeometry(m, n)
+    tbg_consts = TBGConstants(tbg_geom)
+    orig_site = SiteIdx(SVector(0, 0), SVector(0, 0), 1, 1, 1, tbg_geom)
 
-    lattice_sites = []
-    for layer in 1:2
-        for moire_x in 1:5, moire_y in 1:5
-            moire = SVector{2}(moire_x, moire_y)
-            for graphene in tbg_geom.graphene_cells[layer]
-                for sublattice in 1:2
-                    site_idx = SiteIdx(moire, graphene, sublattice, layer, 1, tbg_geom)
-                    site_pos = site_idx.pos
-                    push!(lattice_sites, site_pos)
-                end
-            end
-        end
-    end
-
-    xs = [v[1] for v in lattice_sites]
-    ys = [v[2] for v in lattice_sites]
-
-    fig, ax = plt.subplots()
-    ax.scatter(xs, ys, marker=".", alpha=0.5)
-
-    ax.set_aspect("equal")
-    ax.set_title("θ = $(tbg_geom.θ * (180 / pi))")
-
-    plt.show()
-end
-
-
-function plot_thresh_sites(orig_site::SiteIdx, tbg_geom::TBGGeometry, tbg_consts::TBGConstants)::Nothing
     fig, ax = plt.subplots()
 
     # =================================================================
@@ -351,6 +443,26 @@ function plot_thresh_sites(orig_site::SiteIdx, tbg_geom::TBGGeometry, tbg_consts
 end
 
 
+function test_thresh_construction_scaling()::Nothing
+    times = []
+    m_interval = 1:20
+    for i in m_interval
+        println("Starting (m, n) = ($i, $(i+1))")
+        tbg_geom, t1 = @timed TBGGeometry(i, i+1) 
+        _, t2 = @timed TBGConstants(tbg_geom)
+        t = t1 + t2
+        push!(times, t)
+
+        println("Ending (m, n) = ($i, $(i+1)), t = $t")
+    end
+
+    plt.plot(m_interval, times)
+    plt.xlabel("m")
+    plt.ylabel("time elapsed [s]")
+    plt.savefig("time for thresh construction.png")
+end
+
+
 # ===============================================================================
 # User Area
 # ===============================================================================
@@ -358,33 +470,15 @@ end
 
 function main()
     println("=============== STARTING MAIN ===============")
-    m, n = (8, 9)
-    tbg_geom = TBGGeometry(m, n)
-    @time tbg_consts = TBGConstants(tbg_geom)
-    orig_site = SiteIdx(SVector(0, 0), SVector(0, 0), 1, 1, 1, tbg_geom)
-    plot_thresh_sites(orig_site, tbg_geom, tbg_consts)
+    geom = TBGGeometry(18, 19)
+    consts = TBGConstants(geom)
+    println("moment of truth...")
+    @btime TBGSimulation($geom, $consts)
+    println("HORRAY, time to check...")
+    plot_thresh_sites(8, 9)
 end
 
 
 if abspath(PROGRAM_FILE) == @__FILE__
     main()
 end
-
-
-"""
-Questions:
-
-- currently, im going to write the code such that it runs through all moire
-cells and treats the whole DNxDN matrix, so it can only work for small moire 
-superlattice cells (ex: (m,n)=(2,3)). To treat larger moire cells we would need
-to decouple the cells and treat them individually, reducing to N DxD matrices 
-Note: for our case of (8, 9) --> D ~ 1e3 and for decent resolution in 
-
-- For the threshold distance, I could either set up one distance for the whole 
-program, or set up distances for hopping, hartree, and fock separately so that 
-each has its own length scale. Then for each threshold distance, I would generate
-a dictionary with key: graphene site, and value: (relative moire site, graphene site),
-so that I can use sparce matrices and just fill non-zero terms for sites connected to 
-the site we are looking at (also note that I won't also account for sublattice as the 
-sepration between A and B is small wrt the threshold length scale, so this simplifies it)
-"""
