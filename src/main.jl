@@ -349,6 +349,18 @@ function si_to_mi(si::SiteIdx, geom::TBGGeometry)::Tuple{Int, SVector{3, Float64
 end
 
 
+"""Decompose matrix index into (g, sublattice, layer, spin_bit), all 0-based"""
+function mi_to_parts(mi::Int, geom::TBGGeometry)::NTuple{4, Int}
+    m, n = geom.mn
+    N = m^2 + m * n + n^2
+
+    rest, g = divrem(mi - 1, N)        # g in 0:N-1
+    rest, sub = divrem(rest, 2)        # sub in 0:1
+    spin, layer = divrem(rest, 2)      # layer in 0:1, spin in 0:1
+    return g, sub, layer, spin         # more efficient than converting to SiteIdx
+end
+
+
 """function to construct coupled_midxs and coupled_midxs_tunneling dictionaries"""
 function get_coupling_dicts(geom::TBGGeometry, consts::TBGConstants)::Tuple{Dict{Int, Vector{Int}}, Dict{SVector{2, Int}, Vector{Tuple{SVector{3, Float64}, Float64, Float64}}}}
     coupled_midxs = Dict{Int, Vector{Int}}()
@@ -399,8 +411,8 @@ function TBGSimulation(geom::TBGGeometry, consts::TBGConstants, moire_N::SVector
 end
 
 
-"""constructor for the TBGSimulation object from mn and moire_N"""
-function TBGSimulation(m::Int, n::Int, N1::Int, N2::Int; r_thresh::Float64 = 8.0)::TBGSimulation
+"""constructor for the TBGSimulation object from mn and moire_N (optional, in case you only need to do tight binding)"""
+function TBGSimulation(m::Int, n::Int; r_thresh::Float64 = 8.0, N1::Int = 1, N2::Int = 1)::TBGSimulation
     geom = TBGGeometry(m, n)
     consts = TBGConstants(geom; r_thresh)   # don't forget keyword arg
     moire_N = SVector{2}(N1, N2)
@@ -416,7 +428,11 @@ end
 """
 Construct T_k sparse matrix given k reciprocal lattice vector. (this works for any k)! 
 """
-function construct_T_k(k::SVector{3, Float64}, sim::TBGSimulation)::SparseMatrixCSC{ComplexF64}
+function construct_T_k(
+    k::SVector{3, Float64}, 
+    sim::TBGSimulation
+)::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}
+    dim = 8 * (sim.geometry.mn[1]^2 + sim.geometry.mn[1] * sim.geometry.mn[2] + sim.geometry.mn[2]^2)    # needed for fixing sparse matrix dimensions
     srows = Vector{Int}()
     scols = Vector{Int}()
     selements = Vector{ComplexF64}()
@@ -439,7 +455,7 @@ function construct_T_k(k::SVector{3, Float64}, sim::TBGSimulation)::SparseMatrix
         end
     end
 
-    T_k = sparse(srows, scols, selements)
+    T_k = sparse(srows, scols, selements, dim, dim)
     return T_k
 end
 
@@ -455,15 +471,173 @@ function construct_T_k(k_idx::SVector{2, Int}, sim::TBGSimulation)::SparseMatrix
 end
 
 
-function construct_Hartree_k(k::SVector{3, Float64}, sim::TBGSimulation)::SparseMatrixCSC{ComplexF64}
+"""
+Construct Hartree sparse matrix density matrix dictionary P_dict (keys are k integer coordinates)
+Note that the Hartree mean field hamiltonian does not depend on k-point (so we don't put k in the call signature)
+"""
+function construct_Hartree_k(
+    P_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}}, 
+    sim::TBGSimulation
+)::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}
+    dim = 8 * (sim.geometry.mn[1]^2 + sim.geometry.mn[1] * sim.geometry.mn[2] + sim.geometry.mn[2]^2)    # needed for fixing sparse matrix dimensions
+    srows = Vector{Int}()
+    scols = Vector{Int}()
+    selements = Vector{ComplexF64}()
+
+    P_sum_inner_dict = Dict(mi => sum(P[mi, mi] for P in values(P_dict)) for (mi, _) in sim.coupled_midxs)
+
+    for (mi_μ, coupled_mi_v) in sim.coupled_midxs    # loop through all matrix indices (1st)
+        mi_v = mi_μ     # only diagonal elements
+        # now we start building the specific μv matrix element
+        matrix_element = 0.0 + 0.0im
+        # INSTEAD OF LOOPING OVER ALL INDICES, JUST TAKE THE ONES CONNECTED TO mi_v == mi_μ
+        for mi_μ_p in coupled_mi_v
+            connections_μp_v = sim.coupled_midxs_tunneling[SVector{2}(mi_μ_p, mi_v)]
+            P_sum_inner = P_sum_inner_dict[mi_μ_p]
+
+            for (η, V_μpvη, _) in connections_μp_v    # loop through all connected moire cells
+                if isapprox(norm(η), 0, atol=1e-8) && mi_μ_p == mi_v    # deltas of the hamiltonian
+                    continue
+                end
+
+                matrix_element += V_μpvη * P_sum_inner
+            end
+        end
+
+        N_tot = sim.moire_N[1] * sim.moire_N[2]
+        matrix_element /= N_tot
+
+        if isapprox(matrix_element, 0, atol=1e-8)
+            continue
+        end
+
+        push!(srows, mi_μ)
+        push!(scols, mi_v)
+        push!(selements, matrix_element)
+
+    end
+
+    Hartree_k = sparse(srows, scols, selements, dim, dim)
+    return Hartree_k
 end
 
 
-function construct_Fock_k(k::SVector{3, Float64}, sim::TBGSimulation)::SparseMatrixCSC{ComplexF64}
+function construct_Fock_k(
+    k::SVector{3, Float64}, 
+    P_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}}, 
+    sim::TBGSimulation
+)::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}
+    dim = 8 * (sim.geometry.mn[1]^2 + sim.geometry.mn[1] * sim.geometry.mn[2] + sim.geometry.mn[2]^2)    # needed for fixing sparse matrix dimensions
+    srows = Vector{Int}()
+    scols = Vector{Int}()
+    selements = Vector{ComplexF64}()
+    for (mi_μ, coupled_mi_v) in sim.coupled_midxs    # loop through all matrix indices (1st)
+
+        for mi_v in coupled_mi_v    # loop through all connected matrix indices (2nd)
+            connections_μv = sim.coupled_midxs_tunneling[SVector{2}(mi_μ, mi_v)]
+            matrix_element = 0.0 + 0.0im
+
+            # delta functions of the Fock term
+            μ_parts = mi_to_parts(mi_μ, sim.geometry)
+            v_parts = mi_to_parts(mi_v, sim.geometry)
+            if μ_parts[4] != v_parts[4]    # opposite spins
+                continue
+            end
+            if (μ_parts[1], μ_parts[2], μ_parts[3]) == (v_parts[1], v_parts[2], v_parts[3])
+                continue
+            end
+
+            for (η, V_μpvη, _) in connections_μv    # loop through all connected moire cells
+                
+                P_sum_inner = 0.
+                for (kp_idx, P_kp) in P_dict
+                    kp = frac_to_cart(kp_idx[1] / sim.moire_N[1], kp_idx[2] / sim.moire_N[2], sim.geometry) 
+                    P_sum_inner += P_kp[mi_v, mi_μ] * exp(-im * dot(kp - k, η))
+                end
+
+                matrix_element += V_μpvη * P_sum_inner
+            end
+
+            N_tot = sim.moire_N[1] * sim.moire_N[2]
+            matrix_element /= -N_tot
+
+            if isapprox(matrix_element, 0, atol=1e-8)
+                continue
+            end
+
+            push!(srows, mi_μ)
+            push!(scols, mi_v)
+            push!(selements, matrix_element)
+
+        end
+    end
+
+    Fock_k = sparse(srows, scols, selements, dim, dim)
+    return Fock_k
 end
 
 
-# functions relating to SCF HF
+"""Construct Hartree_k sparse matrix given k int coords and density matrix dictionary P_dict (keys are k integer coordinates)"""
+function construct_Fock_k(
+    k_idx::SVector{2, Int}, 
+    P_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}}, 
+    sim::TBGSimulation
+)::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}
+    k = frac_to_cart(k_idx[1] / sim.moire_N[1], k_idx[2] / sim.moire_N[2], sim.geometry)
+    return construct_Fock_k(k, P_dict, sim)
+end
+
+
+"""Construct the full HF hamiltonian k-block given tight binding term and density matrix blocks (k vector floats)"""
+function get_HF_hamiltonian_k(
+    k::SVector{3, Float64},
+    T_k::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}},
+    P_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}},
+    sim::TBGSimulation
+)::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}
+    H_H_k = construct_Hartree_k(P_dict, sim)
+    H_F_k = construct_Fock_k(k, P_dict, sim)
+    return T_k + H_H_k + H_F_k
+end
+
+
+"""Construct the full HF hamiltonian k-block given tight binding term and density matrix blocks (k integer index)"""
+function get_HF_hamiltonian_k(
+    k_idx::SVector{2, Int},
+    T_k::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}},
+    P_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}},
+    sim::TBGSimulation
+)::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}
+    k = frac_to_cart(k_idx[1] / sim.moire_N[1], k_idx[2] / sim.moire_N[2], sim.geometry)
+    H_H_k = construct_Hartree_k(P_dict, sim)
+    H_F_k = construct_Fock_k(k, P_dict, sim)
+    return T_k + H_H_k + H_F_k
+end
+
+
+function SCF_optimizer(
+    filling::Float64,
+    P_ansatze_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}},
+    T_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}},
+    sim::TBGSimulation;
+    ϵ_tol::Float64 = 1e-8,
+    maxiter::Int = 1000,
+    kT::Float64 = 0.0,
+
+)
+end
+
+
+function SCF_optimizer()
+    # build the T_dict in here (wrapper function) and then pass it on to the main function
+end
+
+
+
+# ===============================================================================
+# Ansatze 
+# ===============================================================================
+
 
 
 # ===============================================================================
@@ -471,40 +645,56 @@ end
 # ===============================================================================
 
 
-"""Using this to get the absolute BZ path k-points (only suitable for TB term only)"""
-function bz_path(geom::TBGGeometry; npts_per_unit::Int = 150)::Tuple{Vector{SVector{3, Float64}}, Vector{Float64}, Vector{Float64}, Vector{String}}
-    labels   = ["K", "Γ", "M", "K'"]
-    symmetry_pts = [geom.kK, geom.kΓ, geom.kM, geom.kKp]
-
-    ks    = SVector{3, Float64}[]    # k-points
-    xs    = Float64[]                # 1D length labeling of BZ path (for plot x-axis)
-    ticks = [0.0]                    # xs for symmetry points only
+"""Generic piecewise-linear path through the given symmetry points"""
+function build_bz_path(
+    symmetry_pts::Vector{SVector{3, Float64}}, 
+    labels::Vector{String},
+    scale::Real; 
+    npts_per_unit::Int = 150
+)::Tuple{Vector{SVector{3, Float64}}, Vector{Float64}, Vector{Float64}, Vector{String}}
+    ks    = SVector{3, Float64}[]
+    xs    = Float64[]
+    ticks = [0.0]
     x0    = 0.0
-    scale = norm(geom.k1)
 
-    for i in 1:(length(symmetry_pts) - 1)                   # iterate through the line segments
-        ka, kb = symmetry_pts[i], symmetry_pts[i+1]         # start and end k-points
-        L = norm(kb - ka)                                   # length of interval
+    for i in 1:(length(symmetry_pts) - 1)
+        ka, kb = symmetry_pts[i], symmetry_pts[i+1]
+        L = norm(kb - ka)
         n = max(round(Int, npts_per_unit * L / scale), 2)
 
         for t in range(0, 1; length = n + 1)[1:end-1]
             push!(ks, ka + t * (kb - ka))
             push!(xs, x0 + t * L)
         end
-
         x0 += L
         push!(ticks, x0)
     end
 
-    push!(ks, symmetry_pts[end]); push!(xs, x0)   # add first and last k-points
+    push!(ks, symmetry_pts[end]); push!(xs, x0)
     return ks, xs, ticks, labels
+end
+
+
+function bz_path_KΓMKp(geom::TBGGeometry; kw...)
+    build_bz_path([geom.kK, geom.kΓ, geom.kM, geom.kKp], ["K", "Γ", "M", "K'"], norm(geom.k1); kw...)
+end
+
+
+function bz_path_ΓKM(geom::TBGGeometry; kw...)
+    build_bz_path([geom.kΓ, geom.kKp, geom.kM], ["Γ", "K'", "M"], norm(geom.k1); kw...)
 end
 
 
 """
 Plot the (TB only) band structure through high symmetry points in 1st BZ.
 """
-function plot_TB_band_structure(sim::TBGSimulation; npts_per_unit::Int = 150, ylims = nothing)::Nothing
+function plot_TB_band_structure(
+    sim::TBGSimulation; 
+    npts_per_unit::Int = 150, 
+    ylims = nothing, 
+    bz_path::Base.Callable = bz_path_1,
+    tag::String = ""
+)::Nothing
     # first, get your k points in the BZ path
     ks, xs, ticks, labels = bz_path(sim.geometry; npts_per_unit)
 
@@ -515,13 +705,7 @@ function plot_TB_band_structure(sim::TBGSimulation; npts_per_unit::Int = 150, yl
     for (i, k) in enumerate(ks)
         println("Iteration $i / $(length(ks))")
         T_k = construct_T_k(k, sim)
-        T_k = Matrix(T_k)
-
-        # converting to fully hermitian matrix (optimal for diagonalization)
-        hermiticity_error = norm(T_k - T_k')
-        if hermiticity_error > 1e-8
-            @warn "Non-Hermitian matrix at k = $k\nHermiticity error = $hermiticity_error"
-        end
+        T_k = Matrix(T_k)               # NEED TO FIGURE OUT HOW TO NOT DO THIS (FEAST?)
         T_k = Hermitian(T_k)
 
         Energies[:, i] = eigvals(T_k)   # dump the eigenvalues on the entire column
@@ -543,7 +727,7 @@ function plot_TB_band_structure(sim::TBGSimulation; npts_per_unit::Int = 150, yl
     ylims === nothing || ax.set_ylim(ylims...)    # if limits are specified use them
     fig.tight_layout()
     
-    plt.savefig("images/trial_bands_TB_only_mn=$(sim.geometry.mn[1])_$(sim.geometry.mn[2]).png")
+    plt.savefig("../data/images/trial_bands_TB_only_mn=$(sim.geometry.mn[1])_$(sim.geometry.mn[2])_" * tag * ".png")
     plt.show()
 end
 
@@ -565,15 +749,6 @@ end
 # ===============================================================================
 
 
-"""
-benchmarking tools and reminders:
-- use @benchmark and display(_) to get the statistics of a function
-- use @btime to get time and memory statistics (it prints automatically)
-- use @time for time of a single run
-- use @elapsed for only time 
-"""
-
-
 function plot_thresh_sites(m::Int, n::Int)::Nothing
     tbg_geom = TBGGeometry(m, n)
     tbg_consts = TBGConstants(tbg_geom)
@@ -584,8 +759,8 @@ function plot_thresh_sites(m::Int, n::Int)::Nothing
     # =================================================================
     # plot the entire lattice over top as well
 
-    lattice_sites = []
     for layer in 1:2
+        lattice_sites = []
         for moire_x in -1:1, moire_y in -1:1
             moire = SVector{2}(moire_x, moire_y)
             for graphene in tbg_geom.graphene_cells[layer]
@@ -596,12 +771,12 @@ function plot_thresh_sites(m::Int, n::Int)::Nothing
                 end
             end
         end
+        # plot each layer separately (different colors)
+        xs_2 = [v[1] for v in lattice_sites]
+        ys_2 = [v[2] for v in lattice_sites]
+
+        ax.scatter(xs_2, ys_2, marker=".", alpha=0.4)
     end
-
-    xs_2 = [v[1] for v in lattice_sites]
-    ys_2 = [v[2] for v in lattice_sites]
-
-    ax.scatter(xs_2, ys_2, marker=".", alpha=0.1)
 
     # =================================================================
 
@@ -648,7 +823,7 @@ function test_thresh_construction_scaling()::Nothing
     plt.plot(m_interval, times)
     plt.xlabel("m")
     plt.ylabel("time elapsed [s]")
-    plt.savefig("time for thresh construction (1).png")
+    plt.savefig("../data/images/time for thresh construction (1).png")
 end
 
 
@@ -659,8 +834,9 @@ end
 
 function main()
     println("=============== STARTING MAIN ===============")
-    sim = TBGSimulation(8, 9, 10, 10)
-    plot_TB_band_structure(sim)
+    sim = TBGSimulation(2, 7)
+    plot_thresh_sites(sim)
+    # plot_TB_band_structure(sim, tag="TEST1", bz_path=bz_path_KΓMKp)
 end
 
 
@@ -669,10 +845,16 @@ if abspath(PROGRAM_FILE) == @__FILE__
 end
 
 
+"""
+NOTES:
+- Still converting the sparse matrices into dense matrices for diagonalization (defeats the purpouse)
+"""
+
 
 """
 Next:
-- implement FEAST for directly diagonalizing the sparse matrices
+- implement FEAST for directly diagonalizing the sparse matrices (you don't need every
+state at each HF iteration, you just need the occupied states)
 - implement HF SCF algorithm 
 - implement direct real space version with sparse matrices
 - implement lattice relaxation
