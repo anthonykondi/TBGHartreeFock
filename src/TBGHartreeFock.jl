@@ -706,46 +706,6 @@ function build_bz_path(
 end
 
 
-# """Generic piecewise-linear path through the given symmetry points"""
-# function build_bz_path(
-#     symmetry_pts::Vector{SVector{3, Float64}}, 
-#     labels::Vector{String},
-#     scale::Real; 
-#     npts_per_unit::Int = 150
-# )::Tuple{Vector{SVector{3, Float64}}, Vector{Float64}, Vector{Float64}, Vector{String}}
-#     ks    = SVector{3, Float64}[]
-#     xs    = Float64[]
-#     ticks = [0.0]
-#     x0    = 0.0
-
-#     for i in 1:(length(symmetry_pts) - 1)
-#         ka, kb = symmetry_pts[i], symmetry_pts[i+1]
-#         L = norm(kb - ka)
-#         n = max(round(Int, npts_per_unit * L / scale), 2)
-
-#         for t in range(0, 1; length = n + 1)[1:end-1]
-#             push!(ks, ka + t * (kb - ka))
-#             push!(xs, x0 + t * L)
-#         end
-#         x0 += L
-#         push!(ticks, x0)
-#     end
-
-#     push!(ks, symmetry_pts[end]); push!(xs, x0)
-#     return ks, xs, ticks, labels
-# end
-
-
-# function bz_path_KΓMKp(geom::TBGGeometry; kw...)
-#     build_bz_path([geom.kK, geom.kΓ, geom.kM, geom.kKp], ["K", "Γ", "M", "K'"], norm(geom.k1); kw...)
-# end
-
-
-# function bz_path_ΓKM(geom::TBGGeometry; kw...)
-#     build_bz_path([geom.kΓ, geom.kKp, geom.kM], ["Γ", "K'", "M"], norm(geom.k1); kw...)
-# end
-
-
 """
 Plot the (TB only) band structure through high symmetry points in 1st BZ.
 """
@@ -812,10 +772,14 @@ end
 # ===============================================================================
 
 
-function plot_thresh_sites(sim::TBGSimulation)::Nothing
+function plot_thresh_sites(
+    sim::TBGSimulation; 
+    N_moire::SVector{2, Int} = SVector{2}(1, 1)
+)::Nothing
     tbg_geom = sim.geometry
     tbg_consts = sim.constants
     orig_site = SiteIdx(SVector(0, 0), SVector(0, 0), 1, 1, 1, tbg_geom)
+    N1, N2 = N_moire
 
     fig, ax = plt.subplots()
 
@@ -824,7 +788,7 @@ function plot_thresh_sites(sim::TBGSimulation)::Nothing
 
     for layer in 1:2
         lattice_sites = []
-        for moire_x in -1:1, moire_y in -1:1
+        for moire_x in -N1:N1, moire_y in -N2:N2
             moire = SVector{2}(moire_x, moire_y)
             for graphene in tbg_geom.graphene_cells[layer]
                 for sublattice in 1:2
@@ -886,7 +850,7 @@ end
 
 
 # ===============================================================================
-# User Area
+# Messages / Notes
 # ===============================================================================
 
 
