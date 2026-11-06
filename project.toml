@@ -1,0 +1,31 @@
+name = "TBGHartreeFock"
+uuid = "6a5098a9-b0ac-4061-8e3f-2b595028219e"
+version = "0.1.0"
+authors = ["Anthony Kondi"]
+
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+ChunkSplitters = "ae650224-84b6-46f8-82ea-d812ca08434e"
+Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
+FeastKit = "fb02c795-5df5-4db3-94bf-d2cc9bf113f2"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+PyPlot = "d330b81b-6aea-500a-939a-2ce795aea3ee"
+SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[compat]
+BenchmarkTools = "1"
+ChunkSplitters = "3"
+Distributed = "1"
+FeastKit = "1"
+LinearAlgebra = "1"
+PyPlot = "2"
+SparseArrays = "1"
+StaticArrays = "1"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

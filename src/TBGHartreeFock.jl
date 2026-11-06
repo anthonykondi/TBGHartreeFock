@@ -1,3 +1,5 @@
+module TBGHartreeFock
+
 using StaticArrays
 using LinearAlgebra
 import PyPlot as plt
@@ -8,7 +10,12 @@ using SparseArrays
 using FeastKit
 
 
-# note that the graphene indices swap roles on the second layer (should only need to worry about this in geometry construction [just amounts to a technical detail])
+# next logistical step is to separate these into their own submodules
+export TBGGeometry, TBGConstants, TBGSimulation, SiteIdx
+export construct_T_k, construct_Hartree_k, construct_Fock_k, get_HF_hamiltonian_k
+export SCF_optimizer
+export plot_TB_band_structure, plot_thresh_sites, test_thresh_construction_scaling
+
 
 """
 Note that there are two indexing types:
@@ -25,7 +32,7 @@ do the rest of the work (much faster and less garbage collection, with the cost 
 # ===============================================================================
 
 
-"""Geometry and stored in a common place"""
+"""Geometrical factors and quantities stored in a common place"""
 struct TBGGeometry
     d::Float64
     h::Float64 
@@ -63,7 +70,7 @@ struct SiteIdx
 end
 
 
-"""Other Constants stored in a common place"""
+"""Other required constants stored in a common place"""
 struct TBGConstants
     t0::Float64 
     t1::Float64 
@@ -133,7 +140,8 @@ function TBGGeometry(m::Int, n::Int)::TBGGeometry
     d = 1.42
     h = 3.34
     mn = SVector{2}(m, n)
-    graphene_cells = get_graphene_cells(mn)
+    println("Getting graphene cells...")
+    @time graphene_cells = get_graphene_cells(mn)
     θ = get_twist_angle(mn)
 
     a1_down = SVector{3}((d*sqrt(3)) * [1, 0, 0])
@@ -274,7 +282,8 @@ function TBGConstants(geom::TBGGeometry; r_thresh::Float64 = 8.0)::TBGConstants
     r_c = 5.0
     l_c = 0.265
     n_thresh = get_n_thresh(r_thresh, geom)       # number of moire cells within proximity (in L1/L2 directions, for a total of 4n^2 + 4n + 1)
-    thresh_connections = get_thresh_connections(r_thresh, n_thresh, geom)
+    println("Getting thresh_connections...")
+    @time thresh_connections = get_thresh_connections(r_thresh, n_thresh, geom)
 
     return TBGConstants(t0, t1, q_sigma, q_pi, r_c, l_c, 
                         r_thresh, n_thresh, thresh_connections)               
@@ -406,7 +415,8 @@ end
 
 """constructor for the TBGSimulation object from the geometry, consts, and moire_N"""
 function TBGSimulation(geom::TBGGeometry, consts::TBGConstants, moire_N::SVector{2, Int})::TBGSimulation
-    coupled_midxs, coupled_midxs_tunneling = get_coupling_dicts(geom, consts)
+    println("Getting coupling_dicts...")
+    @time coupled_midxs, coupled_midxs_tunneling = get_coupling_dicts(geom, consts)
     return TBGSimulation(geom, consts, coupled_midxs, coupled_midxs_tunneling, moire_N)
 end
 
@@ -645,13 +655,34 @@ end
 # ===============================================================================
 
 
-"""Generic piecewise-linear path through the given symmetry points"""
+"""
+Piecewise-linear path through the high-symmetry points named in `path`,
+e.g. [:K, :Γ, :M, :Kp]. Returns (ks, xs, ticks, labels). (pass in a vector of symbols)
+"""
 function build_bz_path(
-    symmetry_pts::Vector{SVector{3, Float64}}, 
-    labels::Vector{String},
-    scale::Real; 
+    geom::TBGGeometry,
+    path::Vector{Symbol};
     npts_per_unit::Int = 150
 )::Tuple{Vector{SVector{3, Float64}}, Vector{Float64}, Vector{Float64}, Vector{String}}
+
+    # symbol -> (k-point, tick label)
+    lookup = Dict{Symbol, Tuple{SVector{3, Float64}, String}}(
+        :K     => (geom.kK,  "K"),
+        :Kp    => (geom.kKp, "K'"),
+        :Gamma => (geom.kΓ,  "Γ"),         # just to have both (you never know...)
+        :Γ     => (geom.kΓ,  "Γ"),
+        :M     => (geom.kM,  "M"),
+    )
+
+    # error if you pass a symmetry point not in geometry
+    for s in path
+        haskey(lookup, s) || error("Unknown symmetry point :$s. Options: $(sort(collect(keys(lookup))))")
+    end
+
+    symmetry_pts = [lookup[s][1] for s in path]
+    labels       = [lookup[s][2] for s in path]
+    scale        = norm(geom.k1)
+
     ks    = SVector{3, Float64}[]
     xs    = Float64[]
     ticks = [0.0]
@@ -675,14 +706,44 @@ function build_bz_path(
 end
 
 
-function bz_path_KΓMKp(geom::TBGGeometry; kw...)
-    build_bz_path([geom.kK, geom.kΓ, geom.kM, geom.kKp], ["K", "Γ", "M", "K'"], norm(geom.k1); kw...)
-end
+# """Generic piecewise-linear path through the given symmetry points"""
+# function build_bz_path(
+#     symmetry_pts::Vector{SVector{3, Float64}}, 
+#     labels::Vector{String},
+#     scale::Real; 
+#     npts_per_unit::Int = 150
+# )::Tuple{Vector{SVector{3, Float64}}, Vector{Float64}, Vector{Float64}, Vector{String}}
+#     ks    = SVector{3, Float64}[]
+#     xs    = Float64[]
+#     ticks = [0.0]
+#     x0    = 0.0
+
+#     for i in 1:(length(symmetry_pts) - 1)
+#         ka, kb = symmetry_pts[i], symmetry_pts[i+1]
+#         L = norm(kb - ka)
+#         n = max(round(Int, npts_per_unit * L / scale), 2)
+
+#         for t in range(0, 1; length = n + 1)[1:end-1]
+#             push!(ks, ka + t * (kb - ka))
+#             push!(xs, x0 + t * L)
+#         end
+#         x0 += L
+#         push!(ticks, x0)
+#     end
+
+#     push!(ks, symmetry_pts[end]); push!(xs, x0)
+#     return ks, xs, ticks, labels
+# end
 
 
-function bz_path_ΓKM(geom::TBGGeometry; kw...)
-    build_bz_path([geom.kΓ, geom.kKp, geom.kM], ["Γ", "K'", "M"], norm(geom.k1); kw...)
-end
+# function bz_path_KΓMKp(geom::TBGGeometry; kw...)
+#     build_bz_path([geom.kK, geom.kΓ, geom.kM, geom.kKp], ["K", "Γ", "M", "K'"], norm(geom.k1); kw...)
+# end
+
+
+# function bz_path_ΓKM(geom::TBGGeometry; kw...)
+#     build_bz_path([geom.kΓ, geom.kKp, geom.kM], ["Γ", "K'", "M"], norm(geom.k1); kw...)
+# end
 
 
 """
@@ -692,11 +753,11 @@ function plot_TB_band_structure(
     sim::TBGSimulation; 
     npts_per_unit::Int = 150, 
     ylims = nothing, 
-    bz_path::Base.Callable = bz_path_1,
+    bz_path::Vector{Symbol} = [:K, :Gamma, :M, :Kp],
     tag::String = ""
 )::Nothing
     # first, get your k points in the BZ path
-    ks, xs, ticks, labels = bz_path(sim.geometry; npts_per_unit)
+    ks, xs, ticks, labels = bz_path(sim.geometry, bz_path; npts_per_unit)
 
     # then, diagonalize and plot the bands
     mi_length = length(sim.coupled_midxs)
@@ -704,11 +765,13 @@ function plot_TB_band_structure(
     
     for (i, k) in enumerate(ks)
         println("Iteration $i / $(length(ks))")
-        T_k = construct_T_k(k, sim)
+        println("Constructing T(k)...")
+        @time T_k = construct_T_k(k, sim)
         T_k = Matrix(T_k)               # NEED TO FIGURE OUT HOW TO NOT DO THIS (FEAST?)
         T_k = Hermitian(T_k)
 
-        Energies[:, i] = eigvals(T_k)   # dump the eigenvalues on the entire column
+        println("Diagonalizing...")
+        @time Energies[:, i] = eigvals(T_k)   # dump the eigenvalues on the entire column
     end
 
     # plots each column as a separate plot (transpose to get the shape right)
@@ -727,7 +790,7 @@ function plot_TB_band_structure(
     ylims === nothing || ax.set_ylim(ylims...)    # if limits are specified use them
     fig.tight_layout()
     
-    plt.savefig("../data/images/trial_bands_TB_only_mn=$(sim.geometry.mn[1])_$(sim.geometry.mn[2])_" * tag * ".png")
+    plt.savefig("trial_bands_TB_only_mn=$(sim.geometry.mn[1])_$(sim.geometry.mn[2])_" * tag * ".png")
     plt.show()
 end
 
@@ -749,9 +812,9 @@ end
 # ===============================================================================
 
 
-function plot_thresh_sites(m::Int, n::Int)::Nothing
-    tbg_geom = TBGGeometry(m, n)
-    tbg_consts = TBGConstants(tbg_geom)
+function plot_thresh_sites(sim::TBGSimulation)::Nothing
+    tbg_geom = sim.geometry
+    tbg_consts = sim.constants
     orig_site = SiteIdx(SVector(0, 0), SVector(0, 0), 1, 1, 1, tbg_geom)
 
     fig, ax = plt.subplots()
@@ -802,11 +865,6 @@ function plot_thresh_sites(m::Int, n::Int)::Nothing
 end
 
 
-function plot_thresh_sites(sim::TBGSimulation)::Nothing
-    return plot_thresh_sites(sim.geometry.mn[1], sim.geometry.mn[2])
-end
-
-
 function test_thresh_construction_scaling()::Nothing
     times = []
     m_interval = 1:32
@@ -823,7 +881,7 @@ function test_thresh_construction_scaling()::Nothing
     plt.plot(m_interval, times)
     plt.xlabel("m")
     plt.ylabel("time elapsed [s]")
-    plt.savefig("../data/images/time for thresh construction (1).png")
+    plt.savefig("time for thresh construction (1).png")
 end
 
 
@@ -832,22 +890,17 @@ end
 # ===============================================================================
 
 
-function main()
-    println("=============== STARTING MAIN ===============")
-    sim = TBGSimulation(2, 7)
-    plot_thresh_sites(sim)
-    # plot_TB_band_structure(sim, tag="TEST1", bz_path=bz_path_KΓMKp)
-end
-
-
 if abspath(PROGRAM_FILE) == @__FILE__
-    main()
+    println("========== FINISHED COMPILING ==========")
 end
 
 
 """
 NOTES:
 - Still converting the sparse matrices into dense matrices for diagonalization (defeats the purpouse)
+- Set threshold to 2.0 for nearest neighbour hopping 
+- 20,000 x 20,000 dim (magic angle) sparse -> dense matrix takes ~20 minutes to diagonalize
+    > for 200 points in the BZ that would take ~70 hours (3 days)
 """
 
 
@@ -859,3 +912,5 @@ state at each HF iteration, you just need the occupied states)
 - implement direct real space version with sparse matrices
 - implement lattice relaxation
 """
+
+end
