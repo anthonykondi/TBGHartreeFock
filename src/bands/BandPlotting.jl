@@ -85,7 +85,8 @@ function plot_TB_band_structure(
     npts_per_unit::Int = 150,
     ylims = nothing, 
     bz_path::Vector{Symbol} = [:K, :Gamma, :M, :Kp],
-    tag::String = ""
+    tag::String = "",
+    parallelized::Bool = false      # keep to false when running on a cluster [TEST CHUNKSPLITTERS BY IMPLEMENTING IT HERE]
 )::Nothing
     # first, get your k points in the BZ path
     ks, _, xs, ticks, labels = build_bz_path(sim, bz_path; npts_per_unit)
@@ -135,7 +136,8 @@ function plot_HF_band_structure(
     npts_per_unit::Int = 150, 
     ylims = nothing, 
     bz_path::Vector{Symbol} = [:K, :Gamma, :M, :Kp],
-    tag::String = ""
+    tag::String = "",
+    parallelized::Bool = false 
 )::Nothing
     # first, get your k points in the BZ path
     _, k_idxs, xs, ticks, labels = build_bz_path(sim, bz_path; npts_per_unit)

@@ -1,8 +1,6 @@
 module Visualization 
 export plot_thresh_sites, test_thresh_construction_scaling
-
 using PyPlot, StaticArrays, BenchmarkTools
-
 using ..KspGeoMapping, ..Structure
 
 

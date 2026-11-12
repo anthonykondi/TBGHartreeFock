@@ -1,0 +1,13 @@
+NOTES:
+- Still converting the sparse matrices into dense matrices for diagonalization (defeats the purpouse)
+- Set threshold to 2.0 for nearest neighbour hopping 
+- 20,000 x 20,000 dim (magic angle) sparse -> dense matrix takes ~20 minutes to diagonalize
+    > for 200 points in the BZ that would take ~70 hours (3 days)
+
+
+Next:
+- implement FEAST for directly diagonalizing the sparse matrices (you don't need every
+state at each HF iteration, you just need the occupied states)
+- implement HF SCF algorithm 
+- implement direct real space version with sparse matrices
+- implement lattice relaxation

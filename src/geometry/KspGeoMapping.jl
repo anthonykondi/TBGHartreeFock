@@ -1,5 +1,5 @@
 module KspGeoMapping
-export TBGSimulation, mi_to_parts, si_to_mi, frac_to_cart
+export TBGSimulation, mi_to_parts, si_to_mi, frac_to_cart, kidx_to_blockidx
 
 using LinearAlgebra, StaticArrays
 
@@ -13,6 +13,7 @@ struct TBGSimulation
     coupled_midxs::Dict{Int, Vector{Int}}         # midxs = matrix indices
     coupled_midxs_tunneling::Dict{SVector{2, Int}, Vector{Tuple{SVector{3, Float64}, Float64, Float64}}}
     moire_N::SVector{2, Int}                      # (N1, N2) moire unit cells
+    N_tot::Int
 end
 
 
@@ -128,7 +129,8 @@ end
 function TBGSimulation(geom::TBGGeometry, consts::TBGConstants, moire_N::SVector{2, Int})::TBGSimulation
     println("Getting coupling_dicts...")
     @time coupled_midxs, coupled_midxs_tunneling = get_coupling_dicts(geom, consts)
-    return TBGSimulation(geom, consts, coupled_midxs, coupled_midxs_tunneling, moire_N)
+    N_tot = geom.N_tot * moire_N[1] * moire_N[2]
+    return TBGSimulation(geom, consts, coupled_midxs, coupled_midxs_tunneling, moire_N, N_tot)
 end
 
 
@@ -142,8 +144,17 @@ end
 
 
 """Get k from its fractional coordinates"""
-frac_to_cart(f1, f2, geo) = SVector{3}(f1 * geo.k1 + f2 * geo.k2)
+frac_to_cart(f1::Float64, f2::Float64, geom::TBGGeometry) = SVector{3}(f1 * geom.k1 + f2 * geom.k2)
 
+
+"""Get k from its fractional coordinates (integer form)"""
+int_to_cart(i1::Int, i2::Int, sim::TBGSimulation) = SVector{3}((i1 / sim.moire_N[1]) * sim.geom.k1 + (i2 / sim.moire_N[2]) * sim.geom.k2)
+
+
+"""get the block index from k in its integer coordinates"""
+function kidx_to_blockidx(kidx::SVector{2, Int}, sim::TBGSimulation)::Int
+    return kidx[1] + kidx[2] * sim.moire_N[1]
+end
 
 
 end

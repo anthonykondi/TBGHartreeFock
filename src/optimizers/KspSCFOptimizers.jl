@@ -1,9 +1,7 @@
 module KspSCFOptimizers
-export SCFOutput, SCF_optimize, P_ansatz
-
+export SCFOutput, SCF_optimize
 using LinearAlgebra, StaticArrays, SparseArrays, Distributed, ChunkSplitters, FeastKit, BenchmarkTools
-
-using ..KspGeoMapping
+using ..KspGeoMapping, ..Ansatze
 
 
 struct SCFOutput
@@ -15,15 +13,16 @@ end
 
 """Get the converged HF hamiltonian (filling is inferred from trace(P_0))"""
 function SCF_optimize(
-    P_ansatze_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}},
+    P_ansatz_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}},
     T_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}},
     sim::TBGSimulation;
     ϵ_tol::Float64 = 1e-8,
     maxiter::Int = 1000,
     kT::Float64 = 0.0,
+    parallelized::Bool = false     # keep to false when running on a cluster
 )::SCFOutput
 
-    # FILL IN
+    N_e = Int(tr())
 
 end
 
@@ -39,19 +38,8 @@ function SCF_optimize(
     ϵ_tol::Float64 = 1e-8,
     maxiter::Int = 1000,
     kT::Float64 = 0.0,
+    parallelized::Bool = false 
 )::SCFOutput
-
-    # FILL IN
-
-end
-
-
-"""Obtain a 1rdm ansatz for specified filling, use type keyword to specify ansatz type"""
-function P_ansatz(
-    filling::Float64,
-    type::String,
-    sim::TBGSimulation
-)::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}
 
     # FILL IN
 

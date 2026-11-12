@@ -9,6 +9,7 @@ struct TBGGeometry
     d::Float64
     h::Float64 
     mn::SVector{2, Int}
+    N_tot::Int
     graphene_cells::Dict{Int, Vector{SVector{2, Int}}}
     θ::Float64
     a1_down::SVector{3, Float64}
@@ -112,6 +113,7 @@ function TBGGeometry(m::Int, n::Int)::TBGGeometry
     d = 1.42
     h = 3.34
     mn = SVector{2}(m, n)
+    N_tot = 8 * (n^2 + n*m + m^2)
     println("Getting graphene cells...")
     @time graphene_cells = get_graphene_cells(mn)
     θ = get_twist_angle(mn)
@@ -140,7 +142,7 @@ function TBGGeometry(m::Int, n::Int)::TBGGeometry
     kK  = SVector{3}((k1 + 2 * k2) / 3)
     kKp = SVector{3}((2 * k1 + k2) / 3)
 
-    return TBGGeometry(d, h, mn, graphene_cells, θ, a1_down,a1_up, a2_down, a2_up, b1_down, b1_up, b2_down, 
+    return TBGGeometry(d, h, mn, N_tot, graphene_cells, θ, a1_down,a1_up, a2_down, a2_up, b1_down, b1_up, b2_down, 
                         b2_up, L1, L2, k1, k2, kΓ, kM, kK, kKp)            
 end
 
