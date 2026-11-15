@@ -28,7 +28,7 @@ end
 Piecewise-linear path through the high-symmetry points named in `path`,
 e.g. [:K, :Γ, :M, :Kp]. Returns (ks, k_idxs, xs, ticks, labels).
 
-`k_idxs[i]` is the (i1, i2) grid index of the k-point on the nk × nk
+k_idxs[i] is the (i1, i2) grid index of the k-point on the nk x nk
 Monkhorst-Pack grid nearest to `ks[i]` (path points that don't land exactly
 on the grid get snapped to the nearest grid point, meant for HF simulation).
 """
