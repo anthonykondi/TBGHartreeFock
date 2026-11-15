@@ -1,7 +1,7 @@
 module Visualization 
 export plot_thresh_sites, test_thresh_construction_scaling
 using PyPlot, StaticArrays, BenchmarkTools
-using ..KspGeoMapping, ..Structure
+using ..GeoMapping, ..Structure
 
 
 function plot_thresh_sites(
@@ -80,7 +80,6 @@ function test_thresh_construction_scaling(sim::TBGSimulation)::Nothing
     plt.ylabel("time elapsed [s]")
     plt.savefig("time for thresh construction (1).png")
 end
-
 
 
 end

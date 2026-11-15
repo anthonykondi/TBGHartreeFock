@@ -1,9 +1,27 @@
-module BandPlotting
-export plot_TB_band_structure, plot_HF_band_structure
+module BandStructure
+export plot_TB_band_structure, plot_HF_band_structure, get_dos
 
 using PyPlot, BenchmarkTools, StaticArrays, LinearAlgebra
 
-using ..KspGeoMapping, ..KspHamiltonians, ..KspSCFOptimizers
+using ..GeoMapping, ..Hamiltonians, ..SCFOptimizers, ..Useful
+
+
+"""
+Calculate density of states using a gaussian for the dirac delta factors.
+Normalization is the number of bands in the system.
+"""
+function get_dos(Energies_dict::Dict{SVector{2, Int}, Vector{Float64}}; η::Float64 = 0.01)::Matrix{Float64}
+    gaussian(x, η) = exp(-x^2 / (2η^2)) / (sqrt(2π) * η)
+
+    Energies = reduce(vcat, values(Energies_dict))
+    N_tot = length(Energies_dict)
+
+    E_range = range(minimum(Energies) - 5η, maximum(Energies) + 5η, step = η / 4)
+    dos_values = [sum(gaussian(E - ε, η) for ε in Energies) / N_tot for E in E_range]
+
+    return [collect(E_range) dos_values]
+end
+
 
 
 """
@@ -95,15 +113,13 @@ function plot_TB_band_structure(
     mi_length = length(sim.coupled_midxs)
     Energies = zeros(mi_length, length(ks))   # each columns = E(k) where rows label bands
     
+    t_iter = 0
+    num_iters = length(ks) 
     for (i, k) in enumerate(ks)
-        println("Iteration $i / $(length(ks))")
-        println("Constructing T(k)...")
-        @time T_k = construct_T_k(k, sim)
-        T_k = Matrix(T_k)               # NEED TO FIGURE OUT HOW TO NOT DO THIS (FEAST?)
-        T_k = Hermitian(T_k)
-
-        println("Diagonalizing T_k...")
-        @time Energies[:, i] = eigvals(T_k)   # dump the eigenvalues on the entire column
+        T_k = construct_T_k(k, sim)
+        Energies[:, i] = eigvals(Hermitian(Matrix(T_k)))   # dump the eigenvalues on the entire column
+        t_iter += 1
+        progress("Diagonalizing T", t_iter, num_iters)
     end
 
     # plots each column as a separate plot (transpose to get the shape right)
@@ -131,29 +147,21 @@ end
 Plot the (full HF) band structure through high symmetry points in 1st BZ.
 """
 function plot_HF_band_structure(
-    filling::Float64,
+    Energies_dict::Dict{SVector{2, Int}, Vector{Float64}},
     sim::TBGSimulation; 
     npts_per_unit::Int = 150, 
     ylims = nothing, 
     bz_path::Vector{Symbol} = [:K, :Gamma, :M, :Kp],
-    tag::String = "",
-    parallelized::Bool = false 
+    tag::String = ""
 )::Nothing
     # first, get your k points in the BZ path
     _, k_idxs, xs, ticks, labels = build_bz_path(sim, bz_path; npts_per_unit)
-
-    # then, diagonalize and plot the bands
-    mi_length = length(sim.coupled_midxs)
-    Energies = zeros(mi_length, length(k_idxs))   # each columns = E(k) where rows label bands
-
-    println("Performing SCF...")
-    scf_out = SCF_optimize(filling, "ansatz type", sim)
     
+    # take the energies in the BZ path (nearest ones, based on the build_bz_path function)
+    mi_length = length(sim.coupled_midxs)
+    Energies = zeros(mi_length, length(k_idxs))
     for (i, k_idx) in enumerate(k_idxs)
-        println("Iteration $i / $(length(ks))")
-        H_k =  scf_out.H_dict[k_idx]
-        println("Diagonalizing H_k...")
-        @time Energies[:, i] = eigvals(H_k)   # dump the eigenvalues on the entire column
+        Energies[:, i] = Energies_dict[k_idx]   # dump the eigenvalues on the entire column
     end
 
     # plots each column as a separate plot (transpose to get the shape right)
@@ -175,7 +183,6 @@ function plot_HF_band_structure(
     plt.savefig("bands_full_HF_mn=$(sim.geometry.mn[1])_$(sim.geometry.mn[2])_" * tag * ".png")
     plt.show()
 end
-
 
 
 end

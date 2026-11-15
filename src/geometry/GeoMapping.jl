@@ -1,4 +1,4 @@
-module KspGeoMapping
+module GeoMapping
 export TBGSimulation, mi_to_parts, si_to_mi, frac_to_cart, kidx_to_blockidx
 
 using LinearAlgebra, StaticArrays
@@ -12,8 +12,8 @@ struct TBGSimulation
     constants::TBGConstants
     coupled_midxs::Dict{Int, Vector{Int}}         # midxs = matrix indices
     coupled_midxs_tunneling::Dict{SVector{2, Int}, Vector{Tuple{SVector{3, Float64}, Float64, Float64}}}
-    moire_N::SVector{2, Int}                      # (N1, N2) moire unit cells
-    N_tot::Int
+    moire_N::SVector{2, Int}                      # (N1, N2) moire unit cells (to make the BZ mesh)
+    N_tot::Int                                    # total number of sites in the TBG torus 
 end
 
 
@@ -129,7 +129,7 @@ end
 function TBGSimulation(geom::TBGGeometry, consts::TBGConstants, moire_N::SVector{2, Int})::TBGSimulation
     println("Getting coupling_dicts...")
     @time coupled_midxs, coupled_midxs_tunneling = get_coupling_dicts(geom, consts)
-    N_tot = geom.N_tot * moire_N[1] * moire_N[2]
+    N_tot = geom.N_tot * moire_N[1] * moire_N[2]    # multiply by number of moire superlattice cells
     return TBGSimulation(geom, consts, coupled_midxs, coupled_midxs_tunneling, moire_N, N_tot)
 end
 

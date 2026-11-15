@@ -1,7 +1,7 @@
 module Ansatze 
-export P_ansatz, check_1rdm
+export P_ansatz
 using LinearAlgebra, StaticArrays, SparseArrays, Random
-using ..KspGeoMapping
+using ..GeoMapping
 
 
 """fill the first N_e diagonal components"""
@@ -46,6 +46,8 @@ function P_ansatz(
     rng::AbstractRNG = Random.default_rng()
 )::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}}
 
+    if !(0.0 <= filling <= 1.0); error("Filling must be between 0 and 1") end
+
     N_e = floor(filling * sim.N_tot)
     P_dict = Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}}()
     
@@ -72,17 +74,6 @@ function P_ansatz(
     return P_dict
 end
 
-
-"""Print check of 1rdm properties"""
-function check_1rdm(P::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}})     
-    h_err = norm(P - P')
-    p_err = norm(P - P * P)
-    e_num = tr(P)
-
-    println("h_err = $h_err")
-    println("p_err = $p_err")
-    println("e_num = $e_num")
-end
 
 
 end

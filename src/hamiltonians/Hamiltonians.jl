@@ -1,9 +1,9 @@
-module KspHamiltonians
-export construct_T_k, construct_Hartree_k, construct_Fock_k, get_HF_hamiltonian_k
+module Hamiltonians
+export construct_T_k, construct_Hartree_k, construct_Fock_k, get_HF_hamiltonian_k, hamiltonian_term_dict, HF_energy
 
 using LinearAlgebra, StaticArrays, SparseArrays 
 
-using ..KspGeoMapping
+using ..Useful, ..GeoMapping
 
 
 """
@@ -50,9 +50,10 @@ end
 
 """
 Construct Hartree sparse matrix density matrix dictionary P_dict (keys are k integer coordinates)
-Note that the Hartree mean field hamiltonian does not depend on k-point (so we don't put k in the call signature)
+Note that the Hartree mean field hamiltonian does not depend on k-point (k in call signature for compatibility with the dictionary constructor function)
 """
 function construct_Hartree_k(
+    k::SVector{3, Float64},
     P_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}}, 
     sim::TBGSimulation
 )::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}
@@ -96,6 +97,16 @@ function construct_Hartree_k(
 
     Hartree_k = sparse(srows, scols, selements, dim, dim)
     return Hartree_k
+end
+
+
+function construct_Hartree_k(
+    k_idx::SVector{2, Int}, 
+    P_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}}, 
+    sim::TBGSimulation
+)::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}
+    k = frac_to_cart(k_idx[1] / sim.moire_N[1], k_idx[2] / sim.moire_N[2], sim.geometry)
+    return construct_Hartree_k(k, P_dict, sim)
 end
 
 
@@ -172,7 +183,7 @@ function get_HF_hamiltonian_k(
     P_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}},
     sim::TBGSimulation
 )::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}
-    H_H_k = construct_Hartree_k(P_dict, sim)
+    H_H_k = construct_Hartree_k(k, P_dict, sim)
     H_F_k = construct_Fock_k(k, P_dict, sim)
     return T_k + H_H_k + H_F_k
 end
@@ -186,9 +197,49 @@ function get_HF_hamiltonian_k(
     sim::TBGSimulation
 )::Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}
     k = frac_to_cart(k_idx[1] / sim.moire_N[1], k_idx[2] / sim.moire_N[2], sim.geometry)
-    H_H_k = construct_Hartree_k(P_dict, sim)
+    H_H_k = construct_Hartree_k(k, P_dict, sim)
     H_F_k = construct_Fock_k(k, P_dict, sim)
     return T_k + H_H_k + H_F_k
+end
+
+
+"""
+Get the k_idx => H dictionary for some hamiltonian term or the entire hamiltonian (use anonymous functions for setting the constructor)
+Usage ex: HF_dict = Hamiltonian_term_dictz(kidx -> get_HF_hamiltonian_k(kidx, T_k, P_dict, sim), sim), 
+where here kidx -> get_HF_hamiltonian_k(kidx, T_k, P_dict, sim) is the term_constructor.
+"""
+function hamiltonian_term_dict(
+    term_constructor::Base.Callable, 
+    sim::TBGSimulation
+)::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}}
+    H_dict = Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}}()
+    terms_calculated = 0
+    n_terms = sim.moire_N[1] * sim.moire_N[2]
+    for kidx1 in 0:(sim.moire_N[1] - 1), kidx2 in 0:(sim.moire_N[2] - 1)
+        kidx = SVector(kidx1, kidx2)
+        H_dict[kidx] = term_constructor(kidx)
+        terms_calculated += 1
+        progress("hamiltonian_term_dict terms calculated", terms_calculated, n_terms)
+    end
+    return H_dict
+end
+
+
+"""Get the non-interacting system energy from the 1rdm and the hamiltonian (works for any 1-body hamiltonian)"""
+function HF_energy(
+    P_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}},
+    HF_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}}
+)::Float64
+    Energy = 0.0
+    terms_calculated = 0
+    n_terms = length(P_dict)
+    for (kidx, P_k) in P_dict    # iterate through each k in the discretized BZ
+        hamiltonian_k = HF_dict[kidx]
+        Energy += real(tr(hamiltonian_k * P_k)) / 2
+        terms_calculated += 1
+        progress("HF_energy terms calculated", terms_calculated, n_terms)
+    end
+    return Energy
 end
 
 

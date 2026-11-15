@@ -1,28 +1,32 @@
 module TBGHartreeFock
 
+include("useful/Useful.jl")
+using .Useful
+export progress, check_1rdm
+
 include("geometry/Structure.jl")
 using .Structure
 export TBGGeometry, SiteIdx, TBGConstants
 
-include("geometry/KspGeoMapping.jl")
-using .KspGeoMapping
+include("geometry/GeoMapping.jl")
+using .GeoMapping
 export TBGSimulation    # I don't think I need to export everythin the same as written in the module (as these are only for the user end)
 
-include("hamiltonians/KspHamiltonians.jl")
-using .KspHamiltonians
-export construct_T_k, construct_Hartree_k, construct_Fock_k, get_HF_hamiltonian_k
+include("hamiltonians/Hamiltonians.jl")
+using .Hamiltonians
+export construct_T_k, construct_Hartree_k, construct_Fock_k, get_HF_hamiltonian_k, hamiltonian_term_dict, HF_energy
 
-include("optimizers/Ansatze.jl")
+include("optimization/Ansatze.jl")
 using .Ansatze
-export P_ansatz, check_1rdm
+export P_ansatz
 
-include("optimizers/KspSCFOptimizers.jl")
-using .KspSCFOptimizers
-export SCFOutput, SCF_optimize, P_ansatz
+include("optimization/SCFOptimizers.jl")
+using .SCFOptimizers
+export SCFOutput, SCF_optimize, plot_SCF_history
 
-include("bands/BandPlotting.jl")
-using .BandPlotting
-export plot_TB_band_structure, plot_HF_band_structure
+include("bands/BandStructure.jl")
+using .BandStructure
+export plot_TB_band_structure, plot_HF_band_structure, get_dos
 
 include("visualization/Visualization.jl")
 using .Visualization
