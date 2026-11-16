@@ -20,7 +20,7 @@ end
 """Get the coulomb interaction strength (accounts for possibility of same site interaction for opposite spins)"""
 function get_V_strength(si_μ::SiteIdx, si_v::SiteIdx)::Float64
     dr = norm(si_μ.pos - si_v.pos)
-    return 1.438 / (0.116 + dr)     # in units of eV (took this form from arXiv:2511.04899v1)
+    return 1.438 / (0.116 + dr)    # in units of eV (took this form from arXiv:2511.04899v1)
 end
 
 

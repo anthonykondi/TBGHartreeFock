@@ -23,7 +23,6 @@ function get_dos(Energies_dict::Dict{SVector{2, Int}, Vector{Float64}}; η::Floa
 end
 
 
-
 """
 Piecewise-linear path through the high-symmetry points named in `path`,
 e.g. [:K, :Γ, :M, :Kp]. Returns (ks, k_idxs, xs, ticks, labels).
@@ -95,6 +94,24 @@ function build_bz_path(
 end
 
 
+"""TB-only eigenvalues on the full k-mesh (same dict format as scfout.E_dict)."""
+function get_TB_energies_dict(sim::TBGSimulation)::Dict{SVector{2, Int}, Vector{Float64}}
+    T_dict = hamiltonian_term_dict(kidx -> construct_T_k(kidx, sim), sim)
+    return Dict{SVector{2, Int}, Vector{Float64}}(k => eigvals(Hermitian(Matrix(T))) for (k, T) in T_dict)
+end
+
+
+"""Draw the DOS rotated by 90° on `ax` (energy on the y axis, shared with the bands)."""
+function plot_dos_panel!(ax, Energies_dict::Dict{SVector{2, Int}, Vector{Float64}}; η::Float64 = 0.01)
+    dos = get_dos(Energies_dict; η = η)
+    ax.plot(dos[:, 2], dos[:, 1], lw=0.8, color="k")
+    ax.fill_betweenx(dos[:, 1], 0, dos[:, 2], color="gray", alpha=0.3)
+    ax.set_xlim(left=0)
+    ax.set_xlabel("DOS")
+    ax.tick_params(labelleft=false)    # y labels already shown on the band panel
+end
+
+
 """
 Plot the (TB only) band structure through high symmetry points in 1st BZ.
 """
@@ -104,7 +121,8 @@ function plot_TB_band_structure(
     ylims = nothing, 
     bz_path::Vector{Symbol} = [:K, :Gamma, :M, :Kp],
     tag::String = "",
-    parallelized::Bool = false      # keep to false when running on a cluster [TEST CHUNKSPLITTERS BY IMPLEMENTING IT HERE]
+    parallelized::Bool = false,      # keep to false when running on a cluster [TEST CHUNKSPLITTERS BY IMPLEMENTING IT HERE]
+    dos_η::Float64 = 0.01
 )::Nothing
     # first, get your k points in the BZ path
     ks, _, xs, ticks, labels = build_bz_path(sim, bz_path; npts_per_unit)
@@ -123,7 +141,8 @@ function plot_TB_band_structure(
     end
 
     # plots each column as a separate plot (transpose to get the shape right)
-    fig, ax = plt.subplots(figsize=(5, 4))
+    fig, (ax, ax_dos) = plt.subplots(1, 2, figsize=(6.5, 4), sharey=true,
+    gridspec_kw=Dict("width_ratios" => [3, 1], "wspace" => 0.05))
     ax.plot(xs, Energies', lw=0.5, alpha=1.0)          # Energies' -> shape (n_k, n_bands)
     
     # labels and other details
@@ -136,6 +155,7 @@ function plot_TB_band_structure(
     ax.set_ylabel("Energy (eV)")
     ax.set_title("TB only, θ = $(round(sim.geometry.θ * (180 / pi), digits=2))°, [(m,n) = ($(sim.geometry.mn[1]), $(sim.geometry.mn[2]))]")
     ylims === nothing || ax.set_ylim(ylims...)    # if limits are specified use them
+    plot_dos_panel!(ax_dos, get_TB_energies_dict(sim); η=dos_η)
     fig.tight_layout()
     
     plt.savefig("bands_TB_only_mn=$(sim.geometry.mn[1])_$(sim.geometry.mn[2])_" * tag * ".png")
@@ -152,7 +172,8 @@ function plot_HF_band_structure(
     npts_per_unit::Int = 150, 
     ylims = nothing, 
     bz_path::Vector{Symbol} = [:K, :Gamma, :M, :Kp],
-    tag::String = ""
+    tag::String = "",
+    dos_η::Float64 = 0.01,
 )::Nothing
     # first, get your k points in the BZ path
     _, k_idxs, xs, ticks, labels = build_bz_path(sim, bz_path; npts_per_unit)
@@ -165,7 +186,8 @@ function plot_HF_band_structure(
     end
 
     # plots each column as a separate plot (transpose to get the shape right)
-    fig, ax = plt.subplots(figsize=(5, 4))
+    fig, (ax, ax_dos) = plt.subplots(1, 2, figsize=(6.5, 4), sharey=true,
+    gridspec_kw=Dict("width_ratios" => [3, 1], "wspace" => 0.05))
     ax.plot(xs, Energies', lw=0.5, alpha=1.0)          # Energies' -> shape (n_k, n_bands)
     
     # labels and other details
@@ -178,6 +200,7 @@ function plot_HF_band_structure(
     ax.set_ylabel("Energy (eV)")
     ax.set_title("Full HF, θ = $(round(sim.geometry.θ * (180 / pi), digits=2))°, [(m,n) = ($(sim.geometry.mn[1]), $(sim.geometry.mn[2]))]")
     ylims === nothing || ax.set_ylim(ylims...)    # if limits are specified use them
+    plot_dos_panel!(ax_dos, Energies_dict; η=dos_η)
     fig.tight_layout()
     
     plt.savefig("bands_full_HF_mn=$(sim.geometry.mn[1])_$(sim.geometry.mn[2])_" * tag * ".png")
