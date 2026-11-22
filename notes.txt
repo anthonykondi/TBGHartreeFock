@@ -5,14 +5,6 @@ NOTES:
 [there is no way to actually prevent this other than parallel computing, even sparse matrices wouldn't work (might apply for TMDs)]
 
 
-Next:
-- implement FEAST for directly diagonalizing the sparse matrices (you don't need every
-state at each HF iteration, you just need the occupied states)
-- implement HF SCF algorithm 
-- implement direct real space version with sparse matrices
-- implement lattice relaxation
-
-
 Big Next Goal:
 Find a way to do the following:
 - represent the full interaction rank 4 tensor efficiently

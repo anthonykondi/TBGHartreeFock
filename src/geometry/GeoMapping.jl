@@ -1,5 +1,5 @@
 module GeoMapping
-export TBGSimulation, mi_to_parts, si_to_mi, frac_to_cart, kidx_to_blockidx
+export TBGSimulation, mi_to_parts, si_to_mi, frac_to_cart, kidx_to_blockidx, spin_partition
 
 using LinearAlgebra, StaticArrays
 
@@ -155,6 +155,25 @@ int_to_cart(i1::Int, i2::Int, sim::TBGSimulation) = SVector{3}((i1 / sim.moire_N
 function kidx_to_blockidx(kidx::SVector{2, Int}, sim::TBGSimulation)::Int
     return kidx[1] + kidx[2] * sim.moire_N[1]
 end
+
+
+"""
+Split matrix indices into spin-up and spin-down sets, ordered so that dn[i] is the same (graphene cell, sublattice, layer) orbital as up[i]. 
+Does not assume a spin label convention, just uses the geomapping convention.
+"""
+function spin_partition(sim::TBGSimulation)::Tuple{Vector{Int}, Vector{Int}}
+    dim = sim.geometry.N_tot
+    parts = [mi_to_parts(mi, sim.geometry) for mi in 1:dim]
+    spins = sort(unique(p[4] for p in parts))
+    length(spins) == 2 || error("expected exactly two spin values, got $spins")
+
+    up = [mi for mi in 1:dim if parts[mi][4] == spins[1]]
+    dn_lookup = Dict((parts[mi][1], parts[mi][2], parts[mi][3]) => mi
+                     for mi in 1:dim if parts[mi][4] == spins[2])
+    dn = [dn_lookup[(parts[mi][1], parts[mi][2], parts[mi][3])] for mi in up]
+    return up, dn
+end
+
 
 
 end

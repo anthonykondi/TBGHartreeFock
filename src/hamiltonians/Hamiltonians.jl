@@ -131,12 +131,15 @@ function construct_Fock_k(
             if μ_parts[4] != v_parts[4]    # opposite spins
                 continue
             end
-            if (μ_parts[1], μ_parts[2], μ_parts[3]) == (v_parts[1], v_parts[2], v_parts[3])
-                continue
-            end
+            # if (μ_parts[1], μ_parts[2], μ_parts[3]) == (v_parts[1], v_parts[2], v_parts[3])
+            #     continue
+            # end
 
             for (η, V_μpvη, _) in connections_μv    # loop through all connected moire cells
-                
+                if isapprox(norm(η), 0, atol=1e-8) && mi_μ == mi_v    # deltas of the hamiltonian (Claude pointed this out)
+                    continue
+                end
+
                 P_sum_inner = 0.
                 for (kp_idx, P_kp) in P_dict
                     kp = frac_to_cart(kp_idx[1] / sim.moire_N[1], kp_idx[2] / sim.moire_N[2], sim.geometry) 
@@ -215,7 +218,7 @@ function hamiltonian_term_dict(
     H_dict = Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}}()
     terms_calculated = 0
     n_terms = sim.moire_N[1] * sim.moire_N[2]
-    for kidx1 in 0:(sim.moire_N[1] - 1), kidx2 in 0:(sim.moire_N[2] - 1)
+    for kidx1 in 0:(sim.moire_N[1] - 1), kidx2 in 0:(sim.moire_N[2] - 1)    # ===================== [ADD MULTIPROCESSING HERE] =====================
         kidx = SVector(kidx1, kidx2)
         H_dict[kidx] = term_constructor(kidx)
         terms_calculated += 1
@@ -225,21 +228,81 @@ function hamiltonian_term_dict(
 end
 
 
+"""
+Double-counting constant E_dc = -<H_int>_0 (total, not per moiré cell).
+
+E_dc = -(N/2) Σ_{μ,v,η} V^{μν}_η (1 - δ_{η0}δ_{μν}) [ n_μ n_v - δ_{σ_μσ_v} |G_{νμ}(η)|² ]
+
+n_μ      = (1/N) Σ_k P_k[μ,μ]
+G_{νμ}(η) = (1/N) Σ_k P_k[v,μ] e^{-i k·η}   (the same inner sum as in construct_Fock_k)
+"""
+function HF_constant_shift(
+    P_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}},
+    sim::TBGSimulation
+)::Float64
+    N_tot = sim.moire_N[1] * sim.moire_N[2]
+
+    # k-points in cartesian coordinates, computed once
+    ks = [(frac_to_cart(kidx[1] / sim.moire_N[1], kidx[2] / sim.moire_N[2], sim.geometry), P_k)
+          for (kidx, P_k) in P_dict]
+
+    # orbital densities per moiré cell
+    n = Dict(mi => real(sum(P[mi, mi] for P in values(P_dict))) / N_tot
+             for (mi, _) in sim.coupled_midxs)
+
+    E_hartree = 0.0
+    E_fock = 0.0
+
+    for (mi_μ, coupled_mi_v) in sim.coupled_midxs
+        μ_parts = mi_to_parts(mi_μ, sim.geometry)
+
+        for mi_v in coupled_mi_v
+            connections = sim.coupled_midxs_tunneling[SVector{2}(mi_μ, mi_v)]
+            v_parts = mi_to_parts(mi_v, sim.geometry)
+            same_spin = μ_parts[4] == v_parts[4]
+
+            for (η, V_μvη, _) in connections
+                # i ≠ j exclusion (same orbital in the same moiré cell)
+                if mi_μ == mi_v && isapprox(norm(η), 0, atol=1e-8)
+                    continue
+                end
+
+                # Hartree piece: V n_μ n_ν
+                E_hartree += real(V_μvη) * n[mi_μ] * n[mi_v]
+
+                # Exchange piece: V |G_{νμ}(η)|², same spin only
+                if same_spin
+                    G = 0.0 + 0.0im
+                    for (k, P_k) in ks
+                        G += P_k[mi_v, mi_μ] * exp(-im * dot(k, η))
+                    end
+                    G /= N_tot
+                    E_fock += real(V_μvη) * abs2(G)
+                end
+            end
+        end
+    end
+
+    return -(N_tot / 2) * (E_hartree - E_fock)
+end
+
+
 """Get the non-interacting system energy from the 1rdm and the hamiltonian (works for any 1-body hamiltonian)"""
 function HF_energy(
     P_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}},
-    HF_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}}
+    HF_dict::Dict{SVector{2, Int}, Union{Matrix{ComplexF64}, SparseMatrixCSC{ComplexF64}}},
+    sim::TBGSimulation
 )::Float64
     Energy = 0.0
     terms_calculated = 0
     n_terms = length(P_dict)
-    for (kidx, P_k) in P_dict    # iterate through each k in the discretized BZ
+    for (kidx, P_k) in P_dict                   
         hamiltonian_k = HF_dict[kidx]
-        Energy += real(tr(hamiltonian_k * P_k)) / 2
+        Energy += real(tr(hamiltonian_k * P_k))
         terms_calculated += 1
         progress("HF_energy terms calculated", terms_calculated, n_terms)
     end
-    return Energy
+    return Energy + HF_constant_shift(P_dict, sim)
 end
 
 

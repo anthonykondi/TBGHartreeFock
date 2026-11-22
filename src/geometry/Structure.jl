@@ -113,7 +113,7 @@ function TBGGeometry(m::Int, n::Int)::TBGGeometry
     d = 1.42
     h = 3.34
     mn = SVector{2}(m, n)
-    N_tot = 8 * (n^2 + n*m + m^2)
+    N_tot = 8 * (n^2 + n*m + m^2)         # multiply the graphene sites by the other quantum numbers in the cells
     println("Getting graphene cells...")
     @time graphene_cells = get_graphene_cells(mn)
     θ = get_twist_angle(mn)

@@ -133,7 +133,7 @@ function plot_TB_band_structure(
     
     t_iter = 0
     num_iters = length(ks) 
-    for (i, k) in enumerate(ks)
+    for (i, k) in enumerate(ks)    # ===================== [ADD MULTIPROCESSING HERE] =====================
         T_k = construct_T_k(k, sim)
         Energies[:, i] = eigvals(Hermitian(Matrix(T_k)))   # dump the eigenvalues on the entire column
         t_iter += 1
@@ -173,7 +173,7 @@ function plot_HF_band_structure(
     ylims = nothing, 
     bz_path::Vector{Symbol} = [:K, :Gamma, :M, :Kp],
     tag::String = "",
-    dos_η::Float64 = 0.01,
+    dos_η::Float64 = 0.1,
 )::Nothing
     # first, get your k points in the BZ path
     _, k_idxs, xs, ticks, labels = build_bz_path(sim, bz_path; npts_per_unit)

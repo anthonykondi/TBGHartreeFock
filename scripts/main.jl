@@ -1,14 +1,26 @@
 using TBGHartreeFock
-using StaticArrays, LinearAlgebra
+using StaticArrays, LinearAlgebra, Random
 import PyPlot as plt
 
 # USE: julia --project=. scripts/main.jl
 
 function testing_scf()   # this way scopes don't get messed up
-    sim = TBGSimulation(1, 2, N1=4, N2=4)
-    scfout = SCF_optimize(0.5, sim)
+    sim = TBGSimulation(3, 4, N1=8, N2=8)
+    rng = Random.seed!(1476)
+    scfout = SCF_optimize(0.5, sim, rng=rng, kT=0.01; oda=true, HF_type="GHF")
 
-    println(maximum(norm(H - H') for H in values(scfout.H_dict)))
+    save_scf_output("nm=(3,4)_N1N2=(8,8)_half_filling_GHF.jld2", scfout)
+    # scfout = load_scf_output("scfout_data_1.jld2")
+
+    # Checking P's spin structure
+    P_local = local_density_matrix(scfout.P_dict)
+    up, dn = spin_partition(sim)
+    println("|P↑↑ - P↓↓| = ", norm(P_local[up, up] - P_local[dn, dn]))
+    println("|P↑↓|       = ", norm(P_local[up, dn]))
+    println("max |S_z|   = ", maximum(abs, site_observables(scfout.P_dict, sim).sz))
+    println("|P↑↓| + |P↓↑| = ", norm(P_local[up, dn]) + norm(P_local[dn, up]))
+
+    visualize_1rdm_k_block(scfout.P_dict[SVector{2}(7, 7)])
 
     N_e_actual = sim.N_tot
     N_e_calculated = 0
@@ -23,7 +35,7 @@ function testing_scf()   # this way scopes don't get messed up
     println("N_e_actual = $N_e_actual, N_e_calculated = $N_e_calculated")
 
     println("Plotting...")
-    plot_HF_band_structure(scfout.E_dict, sim; tag="with_interaction_back", dos_η=0.1)
+    plot_HF_band_structure(scfout.E_dict, sim; tag="0.5 filling")
 
     dos = get_dos(scfout.E_dict)
     println("DOS integrated = $(sum(dos[:, 2]) * (dos[2, 1] - dos[1, 1]))") 

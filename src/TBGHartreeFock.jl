@@ -10,7 +10,7 @@ export TBGGeometry, SiteIdx, TBGConstants
 
 include("geometry/GeoMapping.jl")
 using .GeoMapping
-export TBGSimulation    # I don't think I need to export everythin the same as written in the module (as these are only for the user end)
+export TBGSimulation, mi_to_parts, si_to_mi, frac_to_cart, kidx_to_blockidx, spin_partition
 
 include("hamiltonians/Hamiltonians.jl")
 using .Hamiltonians
@@ -22,7 +22,7 @@ export P_ansatz
 
 include("optimization/SCFOptimizers.jl")
 using .SCFOptimizers
-export SCFOutput, SCF_optimize, plot_SCF_history
+export SCFOutput, SCF_optimize, plot_SCF_history, save_scf_output, load_scf_output
 
 include("bands/BandStructure.jl")
 using .BandStructure
@@ -30,7 +30,7 @@ export plot_TB_band_structure, plot_HF_band_structure, get_dos
 
 include("visualization/Visualization.jl")
 using .Visualization
-export plot_thresh_sites, test_thresh_construction_scaling
+export plot_thresh_sites, test_thresh_construction_scaling, visualize_1rdm_k_block, local_density_matrix, site_observables, plot_site_observable
 
 
 
