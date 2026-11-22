@@ -20,18 +20,19 @@ end
 """Get the coulomb interaction strength (accounts for possibility of same site interaction for opposite spins)"""
 function get_V_strength(si_μ::SiteIdx, si_v::SiteIdx)::Float64
     dr = norm(si_μ.pos - si_v.pos)
-    return 1.438 / (0.116 + dr)    # in units of eV (took this form from arXiv:2511.04899v1)
+    isapprox(dr, 0, atol=1e-8) && return 3.0       # custom on-site hubbard repulsion term
+    return 1.438 / (0.116 + dr)                    # in units of eV (took this form from arXiv:2511.04899v1)
 end
 
 
 """Get the hopping strength"""
 function get_t_strength(si_μ::SiteIdx, si_v::SiteIdx, geom::TBGGeometry, consts::TBGConstants)::Float64
     
-    if si_μ == si_v    # same site special case (onsite energy of the p_z orbital at site i)
-        return 0.0     # setting to 0 for now (simplest choice)
+    if si_μ == si_v             # same site special case (onsite energy of the p_z orbital at site i)
+        return 0.0              # setting to 0 for now (simplest choice)
     end
 
-    if si_μ.spin != si_v.spin  # Hopping conserves spin
+    if si_μ.spin != si_v.spin   # Hopping conserves spin
         return 0.0
     end
 
@@ -62,9 +63,9 @@ function si_to_mi(si::SiteIdx, geom::TBGGeometry)::Tuple{Int, SVector{3, Float64
     g = graphene_integer(si.graphene, si.layer, geom.mn)
     sub = si.sublattice - 1
     layer = si.layer - 1
-    spin = Int((1 - si.spin) / 2)             # spin +1 -> 0, -1 -> 1
+    spin = Int((1 - si.spin) / 2)                       # spin +1 -> 0, -1 -> 1
 
-    mi = 1 + g + N * (sub + 2 * layer + 4 * spin)        # g + N_g*s + N_g*N_s*l + N_g*N_s*N_l*σ
+    mi = 1 + g + N * (sub + 2 * layer + 4 * spin)       # g + N_g*s + N_g*N_s*l + N_g*N_s*N_l*σ
     R_moire = si.moire[1] * geom.L1 + si.moire[2] * geom.L2
     return mi, R_moire
 end

@@ -3,7 +3,7 @@ NOTES:
 - 20,000 x 20,000 dim (magic angle) sparse -> dense matrix takes ~20 minutes to diagonalize
     > for 200 points in the BZ that would take ~70 hours (3 days) 
 [there is no way to actually prevent this other than parallel computing, even sparse matrices wouldn't work (might apply for TMDs)]
-
+- UHF and GHF are identical for this hamiltonian as it has no spin mixing terms (the hartree fock decoupling removes them)
 
 Big Next Goal:
 Find a way to do the following:

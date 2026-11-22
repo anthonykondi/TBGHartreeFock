@@ -48,6 +48,9 @@ function construct_T_k(k_idx::SVector{2, Int}, sim::TBGSimulation)::SparseMatrix
 end
 
 
+# NOTE: I changed the interactions to exclude on-site terms (would need to add an extra hubbard term for that) [THIS CAUSED THE GAP TO SHRINK]
+# I have now added a hubbard term for same physical site interactions [in geomapping]
+
 """
 Construct Hartree sparse matrix density matrix dictionary P_dict (keys are k integer coordinates)
 Note that the Hartree mean field hamiltonian does not depend on k-point (k in call signature for compatibility with the dictionary constructor function)
@@ -125,18 +128,10 @@ function construct_Fock_k(
             connections_μv = sim.coupled_midxs_tunneling[SVector{2}(mi_μ, mi_v)]
             matrix_element = 0.0 + 0.0im
 
-            # delta functions of the Fock term
             μ_parts = mi_to_parts(mi_μ, sim.geometry)
             v_parts = mi_to_parts(mi_v, sim.geometry)
-            if μ_parts[4] != v_parts[4]    # opposite spins
-                continue
-            end
-            # if (μ_parts[1], μ_parts[2], μ_parts[3]) == (v_parts[1], v_parts[2], v_parts[3])
-            #     continue
-            # end
-
             for (η, V_μpvη, _) in connections_μv    # loop through all connected moire cells
-                if isapprox(norm(η), 0, atol=1e-8) && mi_μ == mi_v    # deltas of the hamiltonian (Claude pointed this out)
+                if isapprox(norm(η), 0, atol=1e-8) && μ_parts[1:3] == v_parts[1:3]    # deltas of the hamiltonian (Claude pointed this out)
                     continue
                 end
 

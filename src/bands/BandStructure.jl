@@ -121,7 +121,7 @@ function plot_TB_band_structure(
     ylims = nothing, 
     bz_path::Vector{Symbol} = [:K, :Gamma, :M, :Kp],
     tag::String = "",
-    parallelized::Bool = false,      # keep to false when running on a cluster [TEST CHUNKSPLITTERS BY IMPLEMENTING IT HERE]
+    parallelized::Bool = false,      
     dos_η::Float64 = 0.01
 )::Nothing
     # first, get your k points in the BZ path
