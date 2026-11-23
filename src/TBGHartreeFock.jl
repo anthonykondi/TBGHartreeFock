@@ -30,7 +30,7 @@ export plot_TB_band_structure, plot_HF_band_structure, get_dos
 
 include("visualization/Visualization.jl")
 using .Visualization
-export plot_thresh_sites, test_thresh_construction_scaling, visualize_1rdm_k_block, plot_magnetization, plot_density
+export plot_thresh_sites, test_thresh_construction_scaling, visualize_1rdm_k_block, plot_magnetization, plot_density, local_density_matrix, site_observables
 
 
 

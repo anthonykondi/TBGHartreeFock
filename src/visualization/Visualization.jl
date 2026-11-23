@@ -1,5 +1,5 @@
 module Visualization 
-export plot_thresh_sites, test_thresh_construction_scaling, visualize_1rdm_k_block, plot_magnetization, plot_density
+export plot_thresh_sites, test_thresh_construction_scaling, visualize_1rdm_k_block, plot_magnetization, plot_density, local_density_matrix, site_observables
 using PyPlot, StaticArrays, BenchmarkTools, SparseArrays, LinearAlgebra
 using ..GeoMapping, ..Structure
 
